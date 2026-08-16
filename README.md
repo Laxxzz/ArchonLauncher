@@ -7,23 +7,21 @@ Starts the [Archon App](https://www.archon.gg/) when World of Warcraft launches.
 Archon has a **"launch with game"** setting. It does not do what most people
 assume: it only opens the window of an **already-running** Archon instance.
 
-Tracing the shipped `app.asar`, the handler is:
+The handler behind that setting lives in the app's own UI layer. When it sees a
+new game process, it waits a few seconds and then asks Archon's window manager
+to open the main window — an operation on a window that already exists. It never
+starts a process.
 
-```js
-// fires when a new game process is detected -- inside the running renderer
-supportsAutoLaunch
-  ? setTimeout(async () => {
-      const g = getSupportedGames().find(n => n.version === e.gameVersionId);
-      g && isEnabled(g) ? await openWindow("main", "Auto Launch on Game Start", false)
-                        : log(`Auto Launch not enabled for ${e.gameVersionId}`)
-    }, 3000)
-  : log("Auto Launch Not Supported")
-```
+That code can only run if Archon is already running. And Archon ships no
+service, no scheduled task, and no resident helper — the Overwolf
+game-detection components (`gep`, `overlay`, `recorder`, `utility`) are loaded
+*inside* `Archon App.exe` itself. So with Archon closed, nothing on the machine
+is watching for the game, and nothing starts it.
 
-`openWindow("main")` un-hides an existing window. Archon ships no service, no
-scheduled task, and no resident helper — the Overwolf game-detection packages
-(`gep`, `overlay`, `recorder`, `utility`) load *inside* `Archon App.exe`. So if
-Archon is not running, nothing is watching for the game and nothing starts it.
+You can confirm this in Archon's own log at
+`%APPDATA%\Archon App\logs\main.log`: when the feature fires it records a window
+action with the reason `Auto Launch on Game Start` — always in a session that
+was already running.
 
 The intended flow is that Archon runs from boot via its *Run on startup*
 setting and sits in the tray all day. If you would rather it start only when
@@ -126,9 +124,9 @@ match. Open Task Manager → Details while the game is running, note the exact
 `config.json` to the full path, then run `Install.cmd` again.
 
 **Archon starts but stays behind the game** — that is Archon's own behaviour.
-Its handler calls `openInactive`, which deliberately opens the window without
-taking focus, so with the game in exclusive fullscreen you will not see it
-until you alt-tab.
+It opens its window *without* taking focus, so with the game in exclusive
+fullscreen you won't see it until you alt-tab. Nothing to fix here; it did
+start.
 
 **`ViewLog.cmd` says the task state is `Ready`** — it only starts at logon.
 Run `Install.cmd` again to start it now, or just sign out and back in.
