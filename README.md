@@ -29,31 +29,32 @@ you actually play, that has to come from outside the app.
 
 ## What this does
 
-A small PowerShell watcher, registered as a hidden logon task, polls for the
-WoW process and starts Archon when it appears — so Archon only runs while
-you're actually playing.
+A small PowerShell watcher, registered as a hidden logon task, checks once a
+second for the WoW process and starts Archon when it appears — so Archon only
+runs while you're actually playing.
+
+It launches Archon normally, so Archon's own game-version detection, tooltips,
+combat log upload and overlay all work exactly as usual.
 
 ### What it costs
 
-Measured on a 16-core desktop with 263 running processes, polling every 5
-seconds, once past startup:
+Measured on a 16-core desktop with ~262 running processes, at the default
+1-second interval, once past startup:
 
 | | Watcher | Archon App idling |
 | --- | --- | --- |
 | Processes | 1 | 13 |
 | Private memory | ~103 MB | ~1,622 MB |
-| CPU | 15.6 ms per 20 s — 0.08% of one core, 0.005% of all cores | — |
+| CPU | 94 ms per 20 s — 0.47% of one core, **0.029% of all cores** | — |
 
-Each check takes about 4 ms to enumerate every process on the system. Dropping
-`PollSeconds` to `1` makes that five times as often and still lands around
-0.02% of total CPU, so choose the interval for responsiveness rather than for
-performance.
+Each check takes roughly 4 ms to enumerate every process on the system. Raising
+`PollSeconds` to `5` cuts the CPU by five times, to about 0.005% of all cores —
+but both figures are far below the noise floor of normal desktop activity, so
+pick the interval for responsiveness rather than for performance.
 
-The memory is PowerShell's runtime rather than the script itself, and it is
-about a sixteenth of what Archon uses sitting idle.
-
-It launches Archon normally, so Archon's own game-version detection, tooltips,
-combat log upload and overlay all work exactly as usual.
+The memory is PowerShell's runtime rather than the script itself. It is roughly
+a sixteenth of what Archon uses sitting idle, which is the trade this tool
+exists to make.
 
 ## Install
 
@@ -99,14 +100,14 @@ powershell -ExecutionPolicy Bypass -File .\Uninstall.ps1
 ## Configuration
 
 Optional. Copy `config.example.json` to `config.json` next to
-`ArchonLauncher.ps1` **before** running `Install.ps1`, and it gets installed
+`ArchonLauncher.ps1` **before** running `Install.cmd`, and it gets installed
 along with the script. Empty or missing values fall back to the defaults:
 
 ```json
 {
   "ArchonExe":          "C:\\Program Files\\Archon App\\Archon App.exe",
   "GamePattern":        "^Wow(Classic|T|B)?$",
-  "PollSeconds":        5,
+  "PollSeconds":        1,
   "LaunchDelaySeconds": 3,
   "QuitWithWow":        false
 }
@@ -116,7 +117,7 @@ along with the script. Empty or missing values fall back to the defaults:
 | --- | --- | --- |
 | `ArchonExe` | auto-detected | Path to `Archon App.exe`. Found via the uninstall registry entry, then the usual install locations. |
 | `GamePattern` | `^Wow(Classic\|T\|B)?$` | Regex against process names, no `.exe`. Covers retail, Classic, PTR (`WowT`), beta (`WowB`). |
-| `PollSeconds` | `5` | Seconds between checks. |
+| `PollSeconds` | `1` | Seconds between checks. Minimum `1`. |
 | `LaunchDelaySeconds` | `3` | Wait this long after spotting the game before starting Archon. `0` launches immediately. |
 | `QuitWithWow` | `false` | Close Archon when the game exits. |
 
@@ -125,11 +126,12 @@ To watch retail only, set `GamePattern` to `^Wow$`.
 ### About the timing
 
 The delay runs from when the watcher *spots* the game, not from the instant WoW
-starts — those differ by up to `PollSeconds`. With the defaults, Archon starts
-**3–8 seconds** after you launch WoW.
+starts — those differ by up to `PollSeconds`. At the defaults that gap is at
+most a second, so Archon appears **3–4 seconds** after you launch WoW.
 
-For something closer to a true 3 seconds, set `PollSeconds` to `1` and leave
-`LaunchDelaySeconds` at `3`. Checking once a second is still negligible work.
+Want it to wait longer before appearing? Raise `LaunchDelaySeconds`. Raising
+`PollSeconds` instead makes the timing less predictable, since it widens the
+window between the game starting and the watcher noticing.
 
 ## Verifying / troubleshooting
 
@@ -137,13 +139,18 @@ Double-click **`ViewLog.cmd`** — it shows recent activity and whether the task
 is running. A healthy run looks like:
 
 ```
-[2026-08-15 18:31:55] watcher started (pid 4688)
-[2026-08-15 18:31:55] archon    : C:\Program Files\Archon App\Archon App.exe
-[2026-08-15 18:32:05] game detected
-[2026-08-15 18:32:05] launched C:\Program Files\Archon App\Archon App.exe
-[2026-08-15 18:34:16] game detected
-[2026-08-15 18:34:16] Archon already running - nothing to do
+[2026-08-15 22:05:16] watcher started (pid 24196)
+[2026-08-15 22:05:16] archon    : C:\Program Files\Archon App\Archon App.exe
+[2026-08-15 22:05:16] watching  : ^Wow(Classic|T|B)?$  every 1s
+[2026-08-15 22:05:16] delay     : 3s after the game is spotted
+[2026-08-15 22:18:41] game detected
+[2026-08-15 22:18:41] waiting 3s before launching
+[2026-08-15 22:18:44] launched C:\Program Files\Archon App\Archon App.exe
+[2026-08-15 23:47:02] game exited
 ```
+
+If Archon was already open when you started the game you'll see
+`Archon already running - nothing to do` instead, which is also correct.
 
 **Nothing in the log after launching WoW** — the process name probably doesn't
 match. Open Task Manager → Details while the game is running, note the exact

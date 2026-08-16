@@ -19,7 +19,7 @@
     Classic, PTR and beta.
 
 .PARAMETER PollSeconds
-    Seconds between checks. Default 5.
+    Seconds between checks. Default 1.
 
 .PARAMETER LaunchDelaySeconds
     Seconds to wait after spotting the game before starting Archon. Default 3.
@@ -47,7 +47,7 @@ $ErrorActionPreference = 'Stop'
 $cfg = @{
     ArchonExe          = ''
     GamePattern        = '^Wow(Classic|T|B)?$'
-    PollSeconds        = 5
+    PollSeconds        = 1
     LaunchDelaySeconds = 3
     QuitWithWow        = $false
     LogFile            = Join-Path $env:LOCALAPPDATA 'ArchonLauncher\launcher.log'
@@ -76,6 +76,12 @@ if ($PSBoundParameters.ContainsKey('GamePattern')) { $cfg.GamePattern = $GamePat
 if ($PSBoundParameters.ContainsKey('PollSeconds')) { $cfg.PollSeconds = $PollSeconds }
 if ($LaunchDelaySeconds -ge 0)                     { $cfg.LaunchDelaySeconds = $LaunchDelaySeconds }
 if ($QuitWithWow)                                  { $cfg.QuitWithWow = $true }
+
+# ------------------------------------------------------------ sanity check --
+# Start-Sleep -Seconds 0 returns instantly, which would spin a core at 100%.
+# A negative value throws outright. Clamp both rather than trusting the file.
+if ($cfg.PollSeconds        -lt 1) { $cfg.PollSeconds        = 1 }
+if ($cfg.LaunchDelaySeconds -lt 0) { $cfg.LaunchDelaySeconds = 0 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $cfg.LogFile) | Out-Null
 
@@ -137,6 +143,14 @@ function Test-ProcessRunning {
 }
 
 # -------------------------------------------------------------------- main --
+# Validate the pattern before the loop, or a typo throws once a second forever.
+try {
+    $null = [regex]::new($cfg.GamePattern)
+} catch {
+    Write-Log "FATAL: GamePattern is not a valid regex: $($cfg.GamePattern)"
+    exit 1
+}
+
 $exe = Resolve-ArchonExe -Configured $cfg.ArchonExe
 if (-not $exe) {
     Write-Log 'FATAL: could not locate "Archon App.exe" - set ArchonExe in config.json'
