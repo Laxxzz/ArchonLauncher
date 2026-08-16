@@ -1,0 +1,13 @@
+# User's own settings - ship config.example.json instead
+config.json
+
+# Build output
+*.zip
+
+# Runtime
+launcher.log
+launcher.log.1
+
+# Windows
+Thumbs.db
+desktop.ini

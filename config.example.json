@@ -1,0 +1,6 @@
+{
+  "ArchonExe":   "",
+  "GamePattern": "^Wow(Classic|T|B)?$",
+  "PollSeconds": 5,
+  "QuitWithWow": false
+}

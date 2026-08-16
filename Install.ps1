@@ -1,0 +1,107 @@
+<#
+.SYNOPSIS
+    Installs ArchonLauncher as a hidden logon scheduled task for the current user.
+
+.DESCRIPTION
+    Copies the watcher into %LOCALAPPDATA%\ArchonLauncher, registers a scheduled
+    task that starts it at logon, and starts it immediately.
+
+    No administrator rights are required -- the task runs as the current user
+    only. Re-running this script safely overwrites a previous install.
+
+.PARAMETER TaskName
+    Scheduled task name. Default "ArchonLauncher".
+
+.PARAMETER QuitWithWow
+    Also close Archon when WoW exits.
+
+.EXAMPLE
+    powershell -ExecutionPolicy Bypass -File .\Install.ps1
+#>
+[CmdletBinding()]
+param(
+    [string] $TaskName = 'ArchonLauncher',
+    [switch] $QuitWithWow
+)
+
+$ErrorActionPreference = 'Stop'
+
+$installDir = Join-Path $env:LOCALAPPDATA 'ArchonLauncher'
+$target     = Join-Path $installDir 'ArchonLauncher.ps1'
+$source     = Join-Path $PSScriptRoot 'ArchonLauncher.ps1'
+
+if (-not (Test-Path $source)) {
+    throw "ArchonLauncher.ps1 not found next to this installer ($PSScriptRoot)"
+}
+
+Write-Host "Installing ArchonLauncher..." -ForegroundColor Cyan
+
+# ------------------------------------------------------------ copy payload --
+New-Item -ItemType Directory -Force -Path $installDir | Out-Null
+Copy-Item $source $target -Force
+Write-Host "  script  -> $target"
+
+$srcCfg = Join-Path $PSScriptRoot 'config.json'
+if (Test-Path $srcCfg) {
+    Copy-Item $srcCfg (Join-Path $installDir 'config.json') -Force
+    Write-Host "  config  -> $installDir\config.json"
+}
+
+# --------------------------------------------------- stop any running copy --
+Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*ArchonLauncher.ps1*' -and $_.ProcessId -ne $PID } |
+    ForEach-Object {
+        Write-Host "  stopping running watcher (pid $($_.ProcessId))"
+        Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
+# -------------------------------------------------------- register the task --
+$psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+
+$argLine = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$target`""
+if ($QuitWithWow) { $argLine += ' -QuitWithWow' }
+
+$action  = New-ScheduledTaskAction -Execute $psExe -Argument $argLine
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+
+$principal = New-ScheduledTaskPrincipal `
+    -UserId "$env:USERDOMAIN\$env:USERNAME" `
+    -LogonType Interactive `
+    -RunLevel Limited
+
+$settings = New-ScheduledTaskSettingsSet `
+    -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries `
+    -StartWhenAvailable `
+    -MultipleInstances IgnoreNew `
+    -RestartCount 3 `
+    -RestartInterval (New-TimeSpan -Minutes 1) `
+    -Hidden
+
+# The watcher is a long-running loop; without this the task is killed after 72h.
+$settings.ExecutionTimeLimit = 'PT0S'
+
+Register-ScheduledTask `
+    -TaskName    $TaskName `
+    -Action      $action `
+    -Trigger     $trigger `
+    -Principal   $principal `
+    -Settings    $settings `
+    -Description 'Starts the Archon App when World of Warcraft launches.' `
+    -Force | Out-Null
+
+Write-Host "  task    -> $TaskName (at logon, hidden)"
+
+Start-ScheduledTask -TaskName $TaskName
+Start-Sleep -Seconds 2
+
+$task = Get-ScheduledTask -TaskName $TaskName
+$info = Get-ScheduledTaskInfo -TaskName $TaskName
+
+Write-Host ""
+Write-Host "Installed." -ForegroundColor Green
+Write-Host "  state    : $($task.State)"
+Write-Host "  last run : $($info.LastRunTime)  (result $($info.LastTaskResult))"
+Write-Host "  log      : $installDir\launcher.log"
+Write-Host ""
+Write-Host "Launch WoW to test. To remove: .\Uninstall.ps1" -ForegroundColor Cyan
