@@ -30,8 +30,27 @@ you actually play, that has to come from outside the app.
 ## What this does
 
 A small PowerShell watcher, registered as a hidden logon task, polls for the
-WoW process and starts Archon when it appears. Roughly 10 MB resident, versus
-Archon's ~14 Electron processes sitting idle.
+WoW process and starts Archon when it appears — so Archon only runs while
+you're actually playing.
+
+### What it costs
+
+Measured on a 16-core desktop with 263 running processes, polling every 5
+seconds, once past startup:
+
+| | Watcher | Archon App idling |
+| --- | --- | --- |
+| Processes | 1 | 13 |
+| Private memory | ~103 MB | ~1,622 MB |
+| CPU | 15.6 ms per 20 s — 0.08% of one core, 0.005% of all cores | — |
+
+Each check takes about 4 ms to enumerate every process on the system. Dropping
+`PollSeconds` to `1` makes that five times as often and still lands around
+0.02% of total CPU, so choose the interval for responsiveness rather than for
+performance.
+
+The memory is PowerShell's runtime rather than the script itself, and it is
+about a sixteenth of what Archon uses sitting idle.
 
 It launches Archon normally, so Archon's own game-version detection, tooltips,
 combat log upload and overlay all work exactly as usual.
@@ -145,8 +164,9 @@ Run `Install.cmd` again to start it now, or just sign out and back in.
 ## Notes
 
 - Windows 10/11, PowerShell 5.1 (the built-in one). No modules required.
-- Polling, not process-creation events — those need admin or audit policy
-  changes. A five-second delay before Archon starts is not worth that.
+- Polling, not process-creation events. Event-driven detection needs
+  administrator rights or an audit-policy change, and the measured cost of
+  polling doesn't justify either.
 - Nothing here modifies, patches, or injects into Archon or WoW. It only calls
   `Start-Process` on the Archon executable.
 
