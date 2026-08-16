@@ -85,10 +85,11 @@ along with the script. Empty or missing values fall back to the defaults:
 
 ```json
 {
-  "ArchonExe":   "C:\\Program Files\\Archon App\\Archon App.exe",
-  "GamePattern": "^Wow(Classic|T|B)?$",
-  "PollSeconds": 5,
-  "QuitWithWow": false
+  "ArchonExe":          "C:\\Program Files\\Archon App\\Archon App.exe",
+  "GamePattern":        "^Wow(Classic|T|B)?$",
+  "PollSeconds":        5,
+  "LaunchDelaySeconds": 3,
+  "QuitWithWow":        false
 }
 ```
 
@@ -97,9 +98,19 @@ along with the script. Empty or missing values fall back to the defaults:
 | `ArchonExe` | auto-detected | Path to `Archon App.exe`. Found via the uninstall registry entry, then the usual install locations. |
 | `GamePattern` | `^Wow(Classic\|T\|B)?$` | Regex against process names, no `.exe`. Covers retail, Classic, PTR (`WowT`), beta (`WowB`). |
 | `PollSeconds` | `5` | Seconds between checks. |
+| `LaunchDelaySeconds` | `3` | Wait this long after spotting the game before starting Archon. `0` launches immediately. |
 | `QuitWithWow` | `false` | Close Archon when the game exits. |
 
 To watch retail only, set `GamePattern` to `^Wow$`.
+
+### About the timing
+
+The delay runs from when the watcher *spots* the game, not from the instant WoW
+starts — those differ by up to `PollSeconds`. With the defaults, Archon starts
+**3–8 seconds** after you launch WoW.
+
+For something closer to a true 3 seconds, set `PollSeconds` to `1` and leave
+`LaunchDelaySeconds` at `3`. Checking once a second is still negligible work.
 
 ## Verifying / troubleshooting
 

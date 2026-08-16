@@ -21,6 +21,10 @@
 .PARAMETER PollSeconds
     Seconds between checks. Default 5.
 
+.PARAMETER LaunchDelaySeconds
+    Seconds to wait after spotting the game before starting Archon. Default 3.
+    Set to 0 to launch immediately.
+
 .PARAMETER QuitWithWow
     Also close Archon when WoW exits.
 
@@ -33,6 +37,7 @@ param(
     [string] $ArchonExe,
     [string] $GamePattern,
     [int]    $PollSeconds,
+    [int]    $LaunchDelaySeconds = -1,
     [switch] $QuitWithWow
 )
 
@@ -40,12 +45,13 @@ $ErrorActionPreference = 'Stop'
 
 # ---------------------------------------------------------------- defaults --
 $cfg = @{
-    ArchonExe   = ''
-    GamePattern = '^Wow(Classic|T|B)?$'
-    PollSeconds = 5
-    QuitWithWow = $false
-    LogFile     = Join-Path $env:LOCALAPPDATA 'ArchonLauncher\launcher.log'
-    MaxLogBytes = 1MB
+    ArchonExe          = ''
+    GamePattern        = '^Wow(Classic|T|B)?$'
+    PollSeconds        = 5
+    LaunchDelaySeconds = 3
+    QuitWithWow        = $false
+    LogFile            = Join-Path $env:LOCALAPPDATA 'ArchonLauncher\launcher.log'
+    MaxLogBytes        = 1MB
 }
 
 # ------------------------------------------------------------- config.json --
@@ -68,6 +74,7 @@ if (Test-Path $configPath) {
 if ($PSBoundParameters.ContainsKey('ArchonExe'))   { $cfg.ArchonExe   = $ArchonExe }
 if ($PSBoundParameters.ContainsKey('GamePattern')) { $cfg.GamePattern = $GamePattern }
 if ($PSBoundParameters.ContainsKey('PollSeconds')) { $cfg.PollSeconds = $PollSeconds }
+if ($LaunchDelaySeconds -ge 0)                     { $cfg.LaunchDelaySeconds = $LaunchDelaySeconds }
 if ($QuitWithWow)                                  { $cfg.QuitWithWow = $true }
 
 New-Item -ItemType Directory -Force -Path (Split-Path $cfg.LogFile) | Out-Null
@@ -136,9 +143,12 @@ if (-not $exe) {
     exit 1
 }
 
+$archonPattern = '^' + [regex]::Escape([System.IO.Path]::GetFileNameWithoutExtension($exe)) + '$'
+
 Write-Log "watcher started (pid $PID)"
 Write-Log "archon    : $exe"
 Write-Log "watching  : $($cfg.GamePattern)  every $($cfg.PollSeconds)s"
+Write-Log "delay     : $($cfg.LaunchDelaySeconds)s after the game is spotted"
 if ($cfg.QuitWithWow) { Write-Log 'quit-with-wow: enabled' }
 
 $wasRunning = Test-ProcessRunning $cfg.GamePattern
@@ -156,21 +166,31 @@ while ($true) {
 
     if ($isRunning -and -not $wasRunning) {
         Write-Log 'game detected'
-        if (Test-ProcessRunning '^Archon App$') {
+        if (Test-ProcessRunning $archonPattern) {
             Write-Log 'Archon already running - nothing to do'
         } else {
-            try {
-                Start-Process -FilePath $exe
-                Write-Log "launched $exe"
-            } catch {
-                Write-Log "launch FAILED: $_"
+            if ($cfg.LaunchDelaySeconds -gt 0) {
+                Write-Log "waiting $($cfg.LaunchDelaySeconds)s before launching"
+                Start-Sleep -Seconds $cfg.LaunchDelaySeconds
+            }
+            # The game can disappear during the wait (crash, wrong client, instant alt-F4).
+            if (-not (Test-ProcessRunning $cfg.GamePattern)) {
+                Write-Log 'game gone during the delay - not launching'
+            } else {
+                try {
+                    Start-Process -FilePath $exe
+                    Write-Log "launched $exe"
+                } catch {
+                    Write-Log "launch FAILED: $_"
+                }
             }
         }
     }
     elseif (-not $isRunning -and $wasRunning) {
         Write-Log 'game exited'
         if ($cfg.QuitWithWow) {
-            Get-Process -Name 'Archon App' -ErrorAction SilentlyContinue |
+            Get-Process -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProcessName -match $archonPattern } |
                 ForEach-Object { $null = $_.CloseMainWindow() }
             Write-Log 'asked Archon to close'
         }
