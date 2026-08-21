@@ -101,26 +101,71 @@ function Write-Log {
     }
 }
 
-function Resolve-ArchonExe {
-    param([string]$Configured)
-
-    if ($Configured -and (Test-Path $Configured)) { return $Configured }
-
+function Get-ArchonFromRegistry {
     $keys = @(
         'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
         'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
     )
     foreach ($k in $keys) {
-        $entry = Get-ItemProperty $k -ErrorAction SilentlyContinue |
-                 Where-Object { $_.DisplayName -match 'Archon App' -and $_.InstallLocation } |
-                 Select-Object -First 1
-        if ($entry) {
-            $candidate = Join-Path $entry.InstallLocation 'Archon App.exe'
-            if (Test-Path $candidate) { return $candidate }
+        $entries = Get-ItemProperty $k -ErrorAction SilentlyContinue |
+                   Where-Object { $_.DisplayName -match 'Archon App' }
+
+        foreach ($e in $entries) {
+            # Cleanest source, but Archon 9.6.0 ships this empty.
+            if ($e.InstallLocation) {
+                $c = Join-Path $e.InstallLocation 'Archon App.exe'
+                if (Test-Path $c) { return $c }
+            }
+            # DisplayIcon is the executable followed by an icon index: "...\x.exe,0"
+            if ($e.DisplayIcon) {
+                $c = ($e.DisplayIcon -replace ',\s*\d+\s*$', '').Trim('"', ' ')
+                if ($c -and $c -match '\.exe$' -and (Test-Path $c)) { return $c }
+            }
+            # UninstallString sits in the install directory alongside the app.
+            if ($e.UninstallString) {
+                $u = $e.UninstallString
+                if ($u -match '^\s*"([^"]+)"') { $u = $matches[1] }
+                else { $u = ($u -split '\s+/')[0].Trim() }
+                if ($u) {
+                    $dir = Split-Path $u -Parent
+                    if ($dir) {
+                        $c = Join-Path $dir 'Archon App.exe'
+                        if (Test-Path $c) { return $c }
+                    }
+                }
+            }
         }
     }
+    return $null
+}
 
+function Get-ArchonFromRunningProcess {
+    # If Archon happens to be running, its own image path is the ground truth --
+    # useful when the registry no longer describes the install correctly.
+    try {
+        $p = Get-Process -ErrorAction SilentlyContinue |
+             Where-Object { $_.ProcessName -like 'Archon*' } |
+             Select-Object -First 1
+        if ($p -and $p.Path -and (Test-Path $p.Path)) { return $p.Path }
+    } catch {
+        # Path is inaccessible for processes we cannot open; not fatal.
+    }
+    return $null
+}
+
+function Resolve-ArchonExe {
+    param([string]$Configured)
+
+    if ($Configured -and (Test-Path $Configured)) { return $Configured }
+
+    $fromRegistry = Get-ArchonFromRegistry
+    if ($fromRegistry) { return $fromRegistry }
+
+    $fromProcess = Get-ArchonFromRunningProcess
+    if ($fromProcess) { return $fromProcess }
+
+    # Last resort: the locations Archon has historically installed itself to.
     $fallbacks = @(
         (Join-Path $env:ProgramFiles        'Archon App\Archon App.exe'),
         (Join-Path ${env:ProgramFiles(x86)} 'Archon App\Archon App.exe'),
@@ -131,6 +176,11 @@ function Resolve-ArchonExe {
     }
 
     return $null
+}
+
+function Get-ExeNamePattern {
+    param([string]$Path)
+    '^' + [regex]::Escape([System.IO.Path]::GetFileNameWithoutExtension($Path)) + '$'
 }
 
 function Test-ProcessRunning {
@@ -157,7 +207,7 @@ if (-not $exe) {
     exit 1
 }
 
-$archonPattern = '^' + [regex]::Escape([System.IO.Path]::GetFileNameWithoutExtension($exe)) + '$'
+$archonPattern = Get-ExeNamePattern $exe
 
 Write-Log "watcher started (pid $PID)"
 Write-Log "archon    : $exe"
@@ -191,11 +241,28 @@ while ($true) {
             if (-not (Test-ProcessRunning $cfg.GamePattern)) {
                 Write-Log 'game gone during the delay - not launching'
             } else {
-                try {
-                    Start-Process -FilePath $exe
-                    Write-Log "launched $exe"
-                } catch {
-                    Write-Log "launch FAILED: $_"
+                # An Archon update can relocate the executable long after we
+                # resolved it at startup, so re-resolve rather than launching a
+                # path that is no longer there.
+                if (-not (Test-Path $exe)) {
+                    Write-Log "archon no longer at $exe - re-resolving"
+                    $found = Resolve-ArchonExe -Configured $cfg.ArchonExe
+                    if ($found) {
+                        $exe = $found
+                        $archonPattern = Get-ExeNamePattern $exe
+                        Write-Log "archon    : $exe"
+                    } else {
+                        Write-Log 'FAILED: cannot locate Archon anywhere - skipping this launch'
+                    }
+                }
+
+                if (Test-Path $exe) {
+                    try {
+                        Start-Process -FilePath $exe
+                        Write-Log "launched $exe"
+                    } catch {
+                        Write-Log "launch FAILED: $_"
+                    }
                 }
             }
         }

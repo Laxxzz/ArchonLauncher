@@ -121,13 +121,30 @@ along with the script. Empty or missing values fall back to the defaults:
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `ArchonExe` | auto-detected | Path to `Archon App.exe`. Found via the uninstall registry entry, then the usual install locations. |
+| `ArchonExe` | auto-detected | Path to `Archon App.exe`. See [How Archon is found](#how-archon-is-found). |
 | `GamePattern` | `^Wow(Classic\|T\|B)?$` | Regex against process names, no `.exe`. Covers retail, Classic, PTR (`WowT`), beta (`WowB`). |
 | `PollSeconds` | `1` | Seconds between checks. Minimum `1`. |
 | `LaunchDelaySeconds` | `3` | Wait this long after spotting the game before starting Archon. `0` launches immediately. |
 | `QuitWithWow` | `false` | Close Archon when the game exits. |
 
 To watch retail only, set `GamePattern` to `^Wow$`.
+
+### How Archon is found
+
+`ArchonExe` is optional because the watcher locates Archon itself, trying each
+of these in order and taking the first that exists on disk:
+
+1. **`ArchonExe` from `config.json`**, if you set one.
+2. **The uninstall registry entry**, which is checked three ways —
+   `InstallLocation`, then `DisplayIcon` (the executable plus an icon index),
+   then the directory containing `UninstallString`. Archon 9.6.0 ships
+   `InstallLocation` empty, so the second is what actually resolves it today.
+3. **A running Archon process**, whose own image path is ground truth.
+4. **The usual install locations**, as a last resort.
+
+If the resolved path stops existing — an update relocating the install, for
+instance — the watcher re-runs the whole chain at launch time rather than
+failing on a stale path. You'll see `re-resolving` in the log when that happens.
 
 ### About the timing
 
