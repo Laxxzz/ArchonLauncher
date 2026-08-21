@@ -43,6 +43,17 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# ------------------------------------------------------------- single copy --
+# Only one watcher may run at a time. The task starts this script from both a
+# logon trigger and a repeating heartbeat, and the launcher shim means the task
+# itself does not stay resident to block duplicates. Whoever creates the mutex
+# owns the job; later starts exit silently rather than stacking up extra
+# pollers and spamming the log.
+$createdNew = $false
+$script:SingletonMutex = New-Object System.Threading.Mutex(
+    $true, 'Local\ArchonLauncherWatcher', [ref]$createdNew)
+if (-not $createdNew) { exit 0 }
+
 # ---------------------------------------------------------------- defaults --
 $cfg = @{
     ArchonExe          = ''
@@ -192,6 +203,30 @@ function Test-ProcessRunning {
     return $false
 }
 
+function Start-Archon {
+    # An Archon update can relocate the executable long after we resolved it at
+    # startup, so re-resolve rather than launching a path that is no longer there.
+    if (-not (Test-Path $script:exe)) {
+        Write-Log "archon no longer at $($script:exe) - re-resolving"
+        $found = Resolve-ArchonExe -Configured $cfg.ArchonExe
+        if ($found) {
+            $script:exe           = $found
+            $script:archonPattern = Get-ExeNamePattern $found
+            Write-Log "archon    : $($script:exe)"
+        } else {
+            Write-Log 'FAILED: cannot locate Archon anywhere - skipping this launch'
+            return
+        }
+    }
+
+    try {
+        Start-Process -FilePath $script:exe
+        Write-Log "launched $($script:exe)"
+    } catch {
+        Write-Log "launch FAILED: $_"
+    }
+}
+
 # -------------------------------------------------------------------- main --
 # Validate the pattern before the loop, or a typo throws once a second forever.
 try {
@@ -201,22 +236,33 @@ try {
     exit 1
 }
 
-$exe = Resolve-ArchonExe -Configured $cfg.ArchonExe
-if (-not $exe) {
+$script:exe = Resolve-ArchonExe -Configured $cfg.ArchonExe
+if (-not $script:exe) {
     Write-Log 'FATAL: could not locate "Archon App.exe" - set ArchonExe in config.json'
     exit 1
 }
 
-$archonPattern = Get-ExeNamePattern $exe
+$script:archonPattern = Get-ExeNamePattern $script:exe
 
 Write-Log "watcher started (pid $PID)"
-Write-Log "archon    : $exe"
+Write-Log "archon    : $($script:exe)"
 Write-Log "watching  : $($cfg.GamePattern)  every $($cfg.PollSeconds)s"
 Write-Log "delay     : $($cfg.LaunchDelaySeconds)s after the game is spotted"
 if ($cfg.QuitWithWow) { Write-Log 'quit-with-wow: enabled' }
 
+# The watcher can start mid-session: at logon with the game already up, or when
+# the heartbeat revives it after a kill. Waiting for a fresh launch that already
+# happened would leave it dormant for the rest of the session, so catch up
+# instead -- game up and Archon down is exactly the state this tool exists to fix.
 $wasRunning = Test-ProcessRunning $cfg.GamePattern
-if ($wasRunning) { Write-Log 'game already running at startup - waiting for next launch' }
+if ($wasRunning) {
+    if (Test-ProcessRunning $script:archonPattern) {
+        Write-Log 'game already running at startup, Archon is up - nothing to do'
+    } else {
+        Write-Log 'game already running at startup and Archon is not - launching now'
+        Start-Archon
+    }
+}
 
 while ($true) {
     Start-Sleep -Seconds $cfg.PollSeconds
@@ -230,7 +276,7 @@ while ($true) {
 
     if ($isRunning -and -not $wasRunning) {
         Write-Log 'game detected'
-        if (Test-ProcessRunning $archonPattern) {
+        if (Test-ProcessRunning $script:archonPattern) {
             Write-Log 'Archon already running - nothing to do'
         } else {
             if ($cfg.LaunchDelaySeconds -gt 0) {
@@ -241,29 +287,7 @@ while ($true) {
             if (-not (Test-ProcessRunning $cfg.GamePattern)) {
                 Write-Log 'game gone during the delay - not launching'
             } else {
-                # An Archon update can relocate the executable long after we
-                # resolved it at startup, so re-resolve rather than launching a
-                # path that is no longer there.
-                if (-not (Test-Path $exe)) {
-                    Write-Log "archon no longer at $exe - re-resolving"
-                    $found = Resolve-ArchonExe -Configured $cfg.ArchonExe
-                    if ($found) {
-                        $exe = $found
-                        $archonPattern = Get-ExeNamePattern $exe
-                        Write-Log "archon    : $exe"
-                    } else {
-                        Write-Log 'FAILED: cannot locate Archon anywhere - skipping this launch'
-                    }
-                }
-
-                if (Test-Path $exe) {
-                    try {
-                        Start-Process -FilePath $exe
-                        Write-Log "launched $exe"
-                    } catch {
-                        Write-Log "launch FAILED: $_"
-                    }
-                }
+                Start-Archon
             }
         }
     }
@@ -271,7 +295,7 @@ while ($true) {
         Write-Log 'game exited'
         if ($cfg.QuitWithWow) {
             Get-Process -ErrorAction SilentlyContinue |
-                Where-Object { $_.ProcessName -match $archonPattern } |
+                Where-Object { $_.ProcessName -match $script:archonPattern } |
                 ForEach-Object { $null = $_.CloseMainWindow() }
             Write-Log 'asked Archon to close'
         }

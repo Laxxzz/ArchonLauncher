@@ -77,7 +77,14 @@ The task also carries a **heartbeat**: every 5 minutes Windows checks the
 watcher is still alive and restarts it if not. Without that, anything which
 kills the process — a reinstall, a manual kill, a security tool — would leave
 it dead until your next logon, and silently, since a dead watcher looks exactly
-like one that simply hasn't seen the game yet.
+like one that simply hasn't seen the game yet. A mutex inside the script keeps
+duplicate starts from stacking up, so a heartbeat that fires while the watcher
+is healthy costs nothing.
+
+Nothing appears on screen. The task runs `wscript.exe` against a small shim
+rather than `powershell.exe` directly, because Task Scheduler gives a console
+process a console window every time it fires — `-WindowStyle Hidden` does not
+prevent that, since the console is allocated before the script runs.
 
 Double-click **`ViewLog.cmd`** any time to see what it has been doing.
 
@@ -195,9 +202,17 @@ version 1.2.0 the heartbeat restarts it within 5 minutes on its own; before
 that it stayed dead until the next logon. Run `Install.cmd` once to pick up the
 heartbeat.
 
-**`ViewLog.cmd` says the task state is `Ready`** — the watcher isn't running
-right now. The heartbeat should start it within 5 minutes; `Install.cmd` starts
-it immediately.
+**`ViewLog.cmd` says `Watcher: NOT RUNNING`** — the heartbeat should start it
+within 5 minutes; `Install.cmd` starts it immediately. Note that the *task*
+showing as `Ready` rather than `Running` is normal and not a fault: the shim
+exits as soon as it has started the watcher, so task state says nothing about
+health. `ViewLog.cmd` reports the watcher process itself, which is the thing
+that matters.
+
+**You started the game before the watcher was running.** The watcher catches up
+on startup: if the game is already running and Archon is not, it launches
+straight away rather than waiting for a launch that already happened. Versions
+before 1.3.0 went dormant for the rest of the session in that situation.
 
 **The log has no history from previous days.** `Uninstall.cmd` deletes
 `%LOCALAPPDATA%\ArchonLauncher`, log included, so an uninstall/reinstall cycle

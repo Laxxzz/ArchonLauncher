@@ -34,9 +34,14 @@ $ErrorActionPreference = 'Stop'
 $installDir = Join-Path $env:LOCALAPPDATA 'ArchonLauncher'
 $target     = Join-Path $installDir 'ArchonLauncher.ps1'
 $source     = Join-Path $PSScriptRoot 'ArchonLauncher.ps1'
+$shimSource = Join-Path $PSScriptRoot 'RunHidden.vbs'
+$shimTarget = Join-Path $installDir 'RunHidden.vbs'
 
 if (-not (Test-Path $source)) {
     throw "ArchonLauncher.ps1 not found next to this installer ($PSScriptRoot)"
+}
+if (-not (Test-Path $shimSource)) {
+    throw "RunHidden.vbs not found next to this installer ($PSScriptRoot)"
 }
 
 Write-Host "Installing ArchonLauncher..." -ForegroundColor Cyan
@@ -45,6 +50,8 @@ Write-Host "Installing ArchonLauncher..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item $source $target -Force
 Write-Host "  script  -> $target"
+Copy-Item $shimSource $shimTarget -Force
+Write-Host "  shim    -> $shimTarget"
 
 $srcCfg = Join-Path $PSScriptRoot 'config.json'
 if (Test-Path $srcCfg) {
@@ -61,12 +68,16 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Silen
     }
 
 # -------------------------------------------------------- register the task --
-$psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+# Launch through the VBS shim rather than powershell.exe directly: Task
+# Scheduler gives a console-subsystem process a console window every time it
+# fires, which flashes on screen. wscript.exe starts PowerShell with no window
+# at all. See the comments in RunHidden.vbs.
+$wscript = Join-Path $env:SystemRoot 'System32\wscript.exe'
 
-$argLine = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$target`""
+$argLine = "`"$shimTarget`""
 if ($QuitWithWow) { $argLine += ' -QuitWithWow' }
 
-$action = New-ScheduledTaskAction -Execute $psExe -Argument $argLine
+$action = New-ScheduledTaskAction -Execute $wscript -Argument $argLine
 
 # Two triggers, deliberately.
 #
@@ -115,15 +126,27 @@ Register-ScheduledTask `
 Write-Host "  task    -> $TaskName (at logon, hidden, self-healing every ${HeartbeatMinutes}m)"
 
 Start-ScheduledTask -TaskName $TaskName
-Start-Sleep -Seconds 2
 
-$task = Get-ScheduledTask -TaskName $TaskName
-$info = Get-ScheduledTaskInfo -TaskName $TaskName
+# The shim exits as soon as it has spawned PowerShell, so the task returns to
+# Ready immediately and its state says nothing about health. Check for the
+# watcher process itself.
+$watcher = $null
+foreach ($attempt in 1..10) {
+    Start-Sleep -Milliseconds 700
+    $watcher = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+               Where-Object { $_.CommandLine -like '*ArchonLauncher.ps1*' } |
+               Select-Object -First 1
+    if ($watcher) { break }
+}
 
 Write-Host ""
-Write-Host "Installed." -ForegroundColor Green
-Write-Host "  state    : $($task.State)"
-Write-Host "  last run : $($info.LastRunTime)  (result $($info.LastTaskResult))"
+if ($watcher) {
+    Write-Host "Installed and running." -ForegroundColor Green
+    Write-Host "  watcher  : pid $($watcher.ProcessId)"
+} else {
+    Write-Host "Installed, but the watcher did not start." -ForegroundColor Yellow
+    Write-Host "  check $installDir\launcher.log, then run this installer again."
+}
 Write-Host "  log      : $installDir\launcher.log"
 Write-Host ""
 Write-Host "Launch WoW to test. To remove: .\Uninstall.ps1" -ForegroundColor Cyan
