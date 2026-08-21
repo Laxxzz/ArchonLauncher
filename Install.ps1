@@ -15,13 +15,18 @@
 .PARAMETER QuitWithWow
     Also close Archon when WoW exits.
 
+.PARAMETER HeartbeatMinutes
+    How often Task Scheduler re-checks that the watcher is alive, restarting it
+    if it isn't. Default 5.
+
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File .\Install.ps1
 #>
 [CmdletBinding()]
 param(
     [string] $TaskName = 'ArchonLauncher',
-    [switch] $QuitWithWow
+    [switch] $QuitWithWow,
+    [int]    $HeartbeatMinutes = 5
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,8 +66,25 @@ $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.e
 $argLine = "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$target`""
 if ($QuitWithWow) { $argLine += ' -QuitWithWow' }
 
-$action  = New-ScheduledTaskAction -Execute $psExe -Argument $argLine
-$trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
+$action = New-ScheduledTaskAction -Execute $psExe -Argument $argLine
+
+# Two triggers, deliberately.
+#
+# Task Scheduler's "restart on failure" only covers a task that fails to START,
+# not one whose process is killed later. Without a heartbeat, anything that
+# terminates the watcher (a manual kill, a reinstall, an overzealous security
+# tool) leaves it dead until the next logon -- silently.
+#
+# Attaching repetition to the logon trigger does NOT work: it only repeats
+# within that trigger's own window and will not revive a task mid-session.
+# An independent Once trigger with its own repetition does. MultipleInstances
+# is IgnoreNew, so a heartbeat that fires while the watcher is healthy is a
+# no-op.
+$triggers = @(
+    (New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"),
+    (New-ScheduledTaskTrigger -Once -At (Get-Date) `
+        -RepetitionInterval (New-TimeSpan -Minutes $HeartbeatMinutes))
+)
 
 $principal = New-ScheduledTaskPrincipal `
     -UserId "$env:USERDOMAIN\$env:USERNAME" `
@@ -84,13 +106,13 @@ $settings.ExecutionTimeLimit = 'PT0S'
 Register-ScheduledTask `
     -TaskName    $TaskName `
     -Action      $action `
-    -Trigger     $trigger `
+    -Trigger     $triggers `
     -Principal   $principal `
     -Settings    $settings `
     -Description 'Starts the Archon App when World of Warcraft launches.' `
     -Force | Out-Null
 
-Write-Host "  task    -> $TaskName (at logon, hidden)"
+Write-Host "  task    -> $TaskName (at logon, hidden, self-healing every ${HeartbeatMinutes}m)"
 
 Start-ScheduledTask -TaskName $TaskName
 Start-Sleep -Seconds 2

@@ -73,6 +73,12 @@ the other files itself.
 The installer copies the watcher to `%LOCALAPPDATA%\ArchonLauncher`, registers a
 hidden logon task, and starts it immediately — no reboot required.
 
+The task also carries a **heartbeat**: every 5 minutes Windows checks the
+watcher is still alive and restarts it if not. Without that, anything which
+kills the process — a reinstall, a manual kill, a security tool — would leave
+it dead until your next logon, and silently, since a dead watcher looks exactly
+like one that simply hasn't seen the game yet.
+
 Double-click **`ViewLog.cmd`** any time to see what it has been doing.
 
 ### Command line
@@ -165,8 +171,20 @@ It opens its window *without* taking focus, so with the game in exclusive
 fullscreen you won't see it until you alt-tab. Nothing to fix here; it did
 start.
 
-**`ViewLog.cmd` says the task state is `Ready`** — it only starts at logon.
-Run `Install.cmd` again to start it now, or just sign out and back in.
+**It worked for a while and then quietly stopped.** The watcher process was
+killed at some point. `ViewLog.cmd` shows this as a log that just stops — a
+`game detected` with no `launched` line after it, and no later entries. From
+version 1.2.0 the heartbeat restarts it within 5 minutes on its own; before
+that it stayed dead until the next logon. Run `Install.cmd` once to pick up the
+heartbeat.
+
+**`ViewLog.cmd` says the task state is `Ready`** — the watcher isn't running
+right now. The heartbeat should start it within 5 minutes; `Install.cmd` starts
+it immediately.
+
+**The log has no history from previous days.** `Uninstall.cmd` deletes
+`%LOCALAPPDATA%\ArchonLauncher`, log included, so an uninstall/reinstall cycle
+starts the log fresh. That's expected, not a fault.
 
 ## Notes
 
