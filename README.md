@@ -224,6 +224,15 @@ on startup: if the game is already running and Archon is not, it launches
 straight away rather than waiting for a launch that already happened. Versions
 before 1.3.0 went dormant for the rest of the session in that situation.
 
+**The game restarted and Archon didn't come back.** Fixed in 1.3.2. Detection
+tracks process IDs rather than merely whether *a* matching process exists,
+because a restarting game can have the old process still shutting down as the
+new one starts — leaving no instant where nothing matched, and so no launch to
+detect. The log now names the process: `game detected (pid 1640)`.
+
+Note that if Archon closes on its own while the game keeps running, the watcher
+will not restart it — it acts on the game starting, not on Archon disappearing.
+
 **The log has no history from previous days.** `Uninstall.cmd` deletes
 `%LOCALAPPDATA%\ArchonLauncher`, log included, so an uninstall/reinstall cycle
 starts the log fresh. That's expected, not a fault.

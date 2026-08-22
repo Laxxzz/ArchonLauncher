@@ -45,7 +45,7 @@ $ErrorActionPreference = 'Stop'
 
 # The single source of truth for the version. Install.ps1 and ViewLog.cmd read
 # it back out of this file rather than keeping copies that can drift.
-$ArchonLauncherVersion = '1.3.1'
+$ArchonLauncherVersion = '1.3.2'
 
 # ------------------------------------------------------------- single copy --
 # Only one watcher may run at a time. The task starts this script from both a
@@ -207,6 +207,20 @@ function Test-ProcessRunning {
     return $false
 }
 
+function Get-MatchingProcessIds {
+    # Identity matters, not just presence. A game that restarts can have the old
+    # process still shutting down as the new one starts, leaving no moment where
+    # nothing matched -- so "is the game running" never goes false and a
+    # presence-only check sees no launch at all. Comparing process IDs catches
+    # the new instance even when the two overlap.
+    param([string]$Pattern)
+    $ids = @()
+    foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
+        if ($p.ProcessName -match $Pattern) { $ids += $p.Id }
+    }
+    return ,$ids
+}
+
 function Start-Archon {
     # An Archon update can relocate the executable long after we resolved it at
     # startup, so re-resolve rather than launching a path that is no longer there.
@@ -259,7 +273,10 @@ if ($cfg.QuitWithWow) { Write-Log 'quit-with-wow: enabled' }
 # the heartbeat revives it after a kill. Waiting for a fresh launch that already
 # happened would leave it dormant for the rest of the session, so catch up
 # instead -- game up and Archon down is exactly the state this tool exists to fix.
-$wasRunning = Test-ProcessRunning $cfg.GamePattern
+$knownGamePids = @{}
+foreach ($id in (Get-MatchingProcessIds $cfg.GamePattern)) { $knownGamePids[$id] = $true }
+$wasRunning = $knownGamePids.Count -gt 0
+
 if ($wasRunning) {
     if (Test-ProcessRunning $script:archonPattern) {
         Write-Log 'game already running at startup, Archon is up - nothing to do'
@@ -273,14 +290,17 @@ while ($true) {
     Start-Sleep -Seconds $cfg.PollSeconds
 
     try {
-        $isRunning = Test-ProcessRunning $cfg.GamePattern
+        $currentIds = Get-MatchingProcessIds $cfg.GamePattern
     } catch {
         Write-Log "process query failed: $_"
         continue
     }
 
-    if ($isRunning -and -not $wasRunning) {
-        Write-Log 'game detected'
+    $isRunning = $currentIds.Count -gt 0
+    $newIds    = @($currentIds | Where-Object { -not $knownGamePids.ContainsKey($_) })
+
+    if ($newIds.Count -gt 0) {
+        Write-Log "game detected (pid $($newIds -join ', '))"
         if (Test-ProcessRunning $script:archonPattern) {
             Write-Log 'Archon already running - nothing to do'
         } else {
@@ -306,5 +326,7 @@ while ($true) {
         }
     }
 
+    $knownGamePids = @{}
+    foreach ($id in $currentIds) { $knownGamePids[$id] = $true }
     $wasRunning = $isRunning
 }
