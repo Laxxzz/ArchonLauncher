@@ -44,7 +44,12 @@ if (-not (Test-Path $shimSource)) {
     throw "RunHidden.vbs not found next to this installer ($PSScriptRoot)"
 }
 
-Write-Host "Installing ArchonLauncher..." -ForegroundColor Cyan
+$version = 'unknown'
+$vMatch = Select-String -Path $source -Pattern "ArchonLauncherVersion\s*=\s*'([^']+)'" |
+          Select-Object -First 1
+if ($vMatch) { $version = $vMatch.Matches[0].Groups[1].Value }
+
+Write-Host "Installing ArchonLauncher $version..." -ForegroundColor Cyan
 
 # ------------------------------------------------------------ copy payload --
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null

@@ -43,6 +43,10 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+# The single source of truth for the version. Install.ps1 and ViewLog.cmd read
+# it back out of this file rather than keeping copies that can drift.
+$ArchonLauncherVersion = '1.3.1'
+
 # ------------------------------------------------------------- single copy --
 # Only one watcher may run at a time. The task starts this script from both a
 # logon trigger and a repeating heartbeat, and the launcher shim means the task
@@ -245,6 +249,7 @@ if (-not $script:exe) {
 $script:archonPattern = Get-ExeNamePattern $script:exe
 
 Write-Log "watcher started (pid $PID)"
+Write-Log "version   : $ArchonLauncherVersion"
 Write-Log "archon    : $($script:exe)"
 Write-Log "watching  : $($cfg.GamePattern)  every $($cfg.PollSeconds)s"
 Write-Log "delay     : $($cfg.LaunchDelaySeconds)s after the game is spotted"

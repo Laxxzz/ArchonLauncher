@@ -165,8 +165,18 @@ window between the game starting and the watcher noticing.
 
 ## Verifying / troubleshooting
 
-Double-click **`ViewLog.cmd`** — it shows recent activity and whether the task
-is running. A healthy run looks like:
+Double-click **`ViewLog.cmd`**. It reports the installed version, whether the
+watcher is running, and recent activity:
+
+```
+  Installed version : 1.3.1
+  Watcher           : RUNNING (pid 27612)
+  Scheduled task    : installed
+```
+
+The version is read from the installed script rather than from this folder, so
+it tells you what is actually running — useful if an older copy is still lying
+around somewhere. A healthy log looks like:
 
 ```
 [2026-08-15 22:05:16] watcher started (pid 24196)
